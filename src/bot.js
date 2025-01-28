@@ -14,14 +14,24 @@ const models = process.env.GROQ_MODELS ? process.env.GROQ_MODELS.split(',') : ["
 let currentModelIndex = 0;
 let currentModel = models[currentModelIndex];
 
+// In-memory storage for user conversation history
+const userConversations = {};
+
 // Function to get response from Groq
-async function getGroqResponse(query) {
+async function getGroqResponse(query, userId) {
   try {
+    // Get the user's conversation history
+    const conversationHistory = userConversations[userId] || [];
+
+    // Create the messages array including the user's conversation history
+    const messages = [
+      { role: "system", content: "使用繁體中文回答" },
+      ...conversationHistory.map(msg => ({ role: "user", content: msg })),
+      { role: "user", content: query }
+    ];
+
     const completion = await groq.chat.completions.create({
-      messages: [
-        { role: "system", content: "使用繁體中文回答" },
-        { role: "user", content: query }
-      ],
+      messages: messages,
       model: currentModel,
       temperature: 0.5,
       max_tokens: 1024,
@@ -54,6 +64,11 @@ bot.command("setmodel", (ctx) => {
   });
 });
 
+// Command to display the current model
+bot.command("currentmodel", (ctx) => {
+  ctx.reply(`目前使用的模型是 ${currentModel}`);
+});
+
 // Event listener for setting model via inline keyboard buttons
 bot.on("callback_query:data", (ctx) => {
   const callbackData = ctx.callbackQuery.data;
@@ -70,18 +85,32 @@ bot.on("callback_query:data", (ctx) => {
 
 // Event listener for text messages
 bot.on("message:text", async (ctx) => {
+  const userId = ctx.message.from.id;
+  const userMessage = ctx.message.text;
+
+  // Get the user's conversation history or initialize it
+  userConversations[userId] = userConversations[userId] || [];
+
+  // Add the new message to the user's conversation history
+  userConversations[userId].push(userMessage);
+
+  // Keep only the latest 3 messages in the history
+  if (userConversations[userId].length > 3) {
+    userConversations[userId].shift();
+  }
+
   try {
-    const response = await getGroqResponse(ctx.message.text);
+    const response = await getGroqResponse(userMessage, userId);
     ctx.reply(response);
   } catch (error) {
-    ctx.reply("處理訊息時發生錯誤。請稍後再試。");
+    ctx.reply("處理您的訊息時發生錯誤。請稍後再試。");
   }
 });
 
 // Add command hints
 bot.api.setMyCommands([
   { command: "/setmodel", description: "設定模型" },
-  { command: "/listmodels", description: "列出目前可用的模型" },
+  { command: "/currentmodel", description: "顯示目前使用的模型" },
 ]);
 
 // Start the bot
