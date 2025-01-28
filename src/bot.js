@@ -29,7 +29,12 @@ async function getGroqResponse(query) {
     });
 
     // Directly return the response content
-    return completion.choices[0].message.content;
+    let response = completion.choices[0].message.content;
+
+    // Remove any <think> tags from the response
+    response = response.replace(/<\/?think>/g, '');
+
+    return response;
   } catch (error) {
     console.error("Error getting Groq response:", error);
     return "抱歉，發生錯誤。請稍後再試。";
@@ -69,13 +74,13 @@ bot.on("message:text", async (ctx) => {
     const response = await getGroqResponse(ctx.message.text);
     ctx.reply(response);
   } catch (error) {
-    ctx.reply("處理您的訊息時發生錯誤。請稍後再試。");
+    ctx.reply("處理訊息時發生錯誤。請稍後再試。");
   }
 });
 
 // Add command hints
 bot.api.setMyCommands([
-  { command: "/setmodel", description: "設置模型" },
+  { command: "/setmodel", description: "設定模型" },
   { command: "/listmodels", description: "列出目前可用的模型" },
 ]);
 
