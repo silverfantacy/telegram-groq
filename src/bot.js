@@ -1,117 +1,195 @@
 import { Bot } from "grammy";
 import Groq from "groq-sdk";
 
-// Initialize Groq with API key
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+// 配置
+const CONFIG = {
+  maxHistoryLength: 5, // 保存多少組對話(一組包含user和assistant的對話)
+  defaultModel: "deepseek-r1-distill-llama-70b",
+  temperature: 0.7,
+  maxTokens: 1024,
+  systemPrompt:
+    "你是一個友善的AI助手,請使用繁體中文回答。回答要簡潔明瞭,不需要解釋思考過程。",
+};
 
-// Initialize Telegram bot with token
+// 初始化 SDK
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
 
-// Parse models from environment variable
-const models = process.env.GROQ_MODELS ? process.env.GROQ_MODELS.split(',') : ["deepseek-r1-distill-llama-70b"];
-let currentModelIndex = 0;
-let currentModel = models[currentModelIndex];
+// 模型設置
+const models = process.env.GROQ_MODELS?.split(",") || [CONFIG.defaultModel];
+let currentModel = models[0];
 
-// In-memory storage for user conversation history
-const userConversations = {};
+// 對話管理器
+class ConversationManager {
+  constructor() {
+    this.conversations = new Map();
+  }
 
-// Function to get response from Groq
-async function getGroqResponse(query, userId) {
-  try {
-    // Get the user's conversation history
-    const conversationHistory = userConversations[userId] || [];
+  addMessage(userId, userMessage, assistantMessage) {
+    if (!this.conversations.has(userId)) {
+      this.conversations.set(userId, []);
+    }
 
-    // Create the messages array including the user's conversation history
-    const messages = [
-      { role: "system", content: "使用繁體中文回答" },
-      ...conversationHistory.map(msg => ({ role: "user", content: msg })),
-      { role: "user", content: query }
-    ];
+    const history = this.conversations.get(userId);
+    history.push(
+      { role: "user", content: userMessage },
+      { role: "assistant", content: assistantMessage },
+    );
 
-    const completion = await groq.chat.completions.create({
-      messages: messages,
-      model: currentModel,
-      temperature: 0.5,
-      max_tokens: 1024,
-      top_p: 1,
-    });
+    // 保持歷史記錄在限定長度內
+    while (history.length > CONFIG.maxHistoryLength * 2) {
+      history.shift();
+      history.shift();
+    }
+  }
 
-    // Directly return the response content
-    let response = completion.choices[0].message.content;
+  getHistory(userId) {
+    return this.conversations.get(userId) || [];
+  }
 
-    // Remove any <think> tags from the response
-    response = response.replace(/<\/?think>/g, '');
+  clearHistory(userId) {
+    this.conversations.delete(userId);
+  }
 
-    return response;
-  } catch (error) {
-    console.error("Error getting Groq response:", error);
-    return "抱歉，發生錯誤。請稍後再試。";
+  // 獲取可讀性的歷史記錄
+  getReadableHistory(userId) {
+    const history = this.getHistory(userId);
+    if (history.length === 0) return "暫無對話記錄";
+
+    return history
+      .map((msg, index) => {
+        const prefix = msg.role === "user" ? "👤" : "🤖";
+        return `${prefix} ${msg.content}`;
+      })
+      .join("\n\n");
   }
 }
 
-// Command to change the model
+const conversationManager = new ConversationManager();
+
+// API 請求處理
+async function getGroqResponse(query, userId) {
+  try {
+    const history = conversationManager.getHistory(userId);
+
+    const messages = [
+      { role: "system", content: CONFIG.systemPrompt },
+      ...history,
+      { role: "user", content: query },
+    ];
+
+    const completion = await groq.chat.completions.create({
+      messages,
+      model: currentModel,
+      temperature: CONFIG.temperature,
+      max_tokens: CONFIG.maxTokens,
+      top_p: 1,
+    });
+
+    const response = completion.choices[0].message.content
+      .replace(/<\/?think>/g, "")
+      .trim();
+
+    return response;
+  } catch (error) {
+    console.error("Groq API Error:", error);
+    throw new Error("與 AI 服務通訊時發生錯誤");
+  }
+}
+
+// 指令處理
+bot.command("start", (ctx) => {
+  ctx.reply(
+    "歡迎使用 AI 助手! 您可以直接輸入問題與我對話。\n\n" +
+      "可用指令:\n" +
+      "/setmodel - 切換模型\n" +
+      "/currentmodel - 查看當前模型\n" +
+      "/clear - 清除對話歷史\n" +
+      "/history - 查看對話歷史",
+  );
+});
+
 bot.command("setmodel", (ctx) => {
-  const modelOptions = models.map((model, index) => ({
-    text: model,
-    callback_data: `setmodel_${index}`
-  }));
-  ctx.reply('請選擇一個模型:', {
-    reply_markup: {
-      inline_keyboard: modelOptions.map(option => [option])
-    }
+  const modelButtons = models.map((model) => [
+    {
+      text: model,
+      callback_data: `model:${model}`,
+    },
+  ]);
+
+  ctx.reply("請選擇要使用的模型:", {
+    reply_markup: { inline_keyboard: modelButtons },
   });
 });
 
-// Command to display the current model
 bot.command("currentmodel", (ctx) => {
-  ctx.reply(`目前使用的模型是 ${currentModel}`);
+  ctx.reply(`目前使用的模型是: ${currentModel}`);
 });
 
-// Event listener for setting model via inline keyboard buttons
-bot.on("callback_query:data", (ctx) => {
-  const callbackData = ctx.callbackQuery.data;
-  if (callbackData.startsWith("setmodel_")) {
-    const modelIndex = parseInt(callbackData.split("_")[1], 10);
-    if (modelIndex >= 0 && modelIndex < models.length) {
-      currentModel = models[modelIndex];
-      ctx.reply(`模型已更改為 ${currentModel}`);
-    } else {
-      ctx.reply(`無效的模型編號。可用的模型有:\n${models.join("\n")}`);
+bot.command("clear", (ctx) => {
+  const userId = ctx.from.id;
+  conversationManager.clearHistory(userId);
+  ctx.reply("已清除您的對話歷史");
+});
+
+bot.command("history", async (ctx) => {
+  const userId = ctx.from.id;
+  const history = conversationManager.getReadableHistory(userId);
+  await ctx.reply(history, { parse_mode: "HTML" });
+});
+
+// 按鈕回調處理
+bot.on("callback_query:data", async (ctx) => {
+  const data = ctx.callbackQuery.data;
+
+  if (data.startsWith("model:")) {
+    const newModel = data.split(":")[1];
+    if (models.includes(newModel)) {
+      currentModel = newModel;
+      await ctx.reply(`已切換至模型: ${newModel}`);
     }
   }
+
+  await ctx.answerCallbackQuery();
 });
 
-// Event listener for text messages
+// 文字訊息處理
 bot.on("message:text", async (ctx) => {
-  const userId = ctx.message.from.id;
+  const userId = ctx.from.id;
   const userMessage = ctx.message.text;
 
-  // Get the user's conversation history or initialize it
-  userConversations[userId] = userConversations[userId] || [];
-
-  // Add the new message to the user's conversation history
-  userConversations[userId].push(userMessage);
-
-  // Keep only the latest 3 messages in the history
-  if (userConversations[userId].length > 3) {
-    userConversations[userId].shift();
-  }
-
   try {
+    // 顯示正在輸入狀態
+    await ctx.replyWithChatAction("typing");
+
+    // 獲取 AI 回應
     const response = await getGroqResponse(userMessage, userId);
-    ctx.reply(response);
+
+    // 添加對話到歷史記錄
+    conversationManager.addMessage(userId, userMessage, response);
+
+    await ctx.reply(response, {
+      reply_to_message_id: ctx.message.message_id,
+    });
   } catch (error) {
-    ctx.reply("處理您的訊息時發生錯誤。請稍後再試。");
+    console.error("Error:", error);
+    await ctx.reply("抱歉,處理您的訊息時發生錯誤。請稍後再試。");
   }
 });
 
-// Add command hints
+// 設置命令提示
 bot.api.setMyCommands([
-  { command: "/setmodel", description: "設定模型" },
-  { command: "/currentmodel", description: "顯示目前使用的模型" },
+  { command: "start", description: "開始使用" },
+  { command: "setmodel", description: "設定模型" },
+  { command: "currentmodel", description: "顯示目前使用的模型" },
+  { command: "clear", description: "清除對話歷史" },
+  { command: "history", description: "查看對話歷史" },
 ]);
 
-// Start the bot
+// 全局錯誤處理
+bot.catch((err) => {
+  console.error("Bot error:", err);
+});
+
+// 啟動機器人
 bot.start();
