@@ -38,15 +38,22 @@ async function getGroqResponse(query) {
 
 // Command to change the model
 bot.command("setmodel", (ctx) => {
-  const modelOptions = models.map((model, index) => `${index + 1}. ${model}`).join("\n");
-  ctx.reply(`請選擇一個模型:\n${modelOptions}\n使用 "/setmodel <模型編號>" 來設定模型。`);
+  const modelOptions = models.map((model, index) => ({
+    text: model,
+    callback_data: `setmodel_${index}`
+  }));
+  ctx.reply('請選擇一個模型:', {
+    reply_markup: {
+      inline_keyboard: modelOptions.map(option => [option])
+    }
+  });
 });
 
-// Event listener for setting model
-bot.on("message:text", (ctx) => {
-  const messageParts = ctx.message.text.split(" ");
-  if (messageParts[0] === "/setmodel") {
-    const modelIndex = parseInt(messageParts[1], 10) - 1;
+// Event listener for setting model via inline keyboard buttons
+bot.on("callback_query:data", (ctx) => {
+  const callbackData = ctx.callbackQuery.data;
+  if (callbackData.startsWith("setmodel_")) {
+    const modelIndex = parseInt(callbackData.split("_")[1], 10);
     if (modelIndex >= 0 && modelIndex < models.length) {
       currentModel = models[modelIndex];
       ctx.reply(`模型已更改為 ${currentModel}`);
