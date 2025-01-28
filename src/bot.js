@@ -19,7 +19,7 @@ async function getGroqResponse(query) {
   try {
     const completion = await groq.chat.completions.create({
       messages: [
-        { role: "system", content: "回覆盡量用繁體中文" },
+        { role: "system", content: "使用繁體中文回答" },
         { role: "user", content: query }
       ],
       model: currentModel,
@@ -38,24 +38,22 @@ async function getGroqResponse(query) {
 
 // Command to change the model
 bot.command("setmodel", (ctx) => {
-  const newModel = ctx.message.text.split(" ")[1];
-  if (newModel) {
-    if (models.includes(newModel)) {
-      currentModel = newModel;
-      ctx.reply(`模型已更改為 ${currentModel}`);
-    } else {
-      ctx.reply(`無效的模型名稱。可用的模型有: ${models.join(', ')}`);
-    }
-  } else {
-    ctx.reply("請提供模型名稱。");
-  }
+  const modelOptions = models.map((model, index) => `${index + 1}. ${model}`).join("\n");
+  ctx.reply(`請選擇一個模型:\n${modelOptions}\n使用 "/setmodel <模型編號>" 來設定模型。`);
 });
 
-// Command to cycle through the models
-bot.command("nextmodel", (ctx) => {
-  currentModelIndex = (currentModelIndex + 1) % models.length;
-  currentModel = models[currentModelIndex];
-  ctx.reply(`模型已更改為 ${currentModel}`);
+// Event listener for setting model
+bot.on("message:text", (ctx) => {
+  const messageParts = ctx.message.text.split(" ");
+  if (messageParts[0] === "/setmodel") {
+    const modelIndex = parseInt(messageParts[1], 10) - 1;
+    if (modelIndex >= 0 && modelIndex < models.length) {
+      currentModel = models[modelIndex];
+      ctx.reply(`模型已更改為 ${currentModel}`);
+    } else {
+      ctx.reply(`無效的模型編號。可用的模型有:\n${models.join("\n")}`);
+    }
+  }
 });
 
 // Event listener for text messages
@@ -67,6 +65,12 @@ bot.on("message:text", async (ctx) => {
     ctx.reply("處理您的訊息時發生錯誤。請稍後再試。");
   }
 });
+
+// Add command hints
+bot.api.setMyCommands([
+  { command: "/setmodel", description: "設置模型" },
+  { command: "/listmodels", description: "列出目前可用的模型" },
+]);
 
 // Start the bot
 bot.start();
