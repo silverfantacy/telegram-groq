@@ -7,8 +7,13 @@ const CONFIG = {
   defaultModel: "deepseek-r1-distill-llama-70b",
   temperature: 0.7,
   maxTokens: 1024,
-  systemPrompt:
-    "你是一個友善的AI助手,請使用繁體中文回答。回答要簡潔明瞭,不需要解釋思考過程。",
+  systemPrompt: `你是專業的AI助手，請：
+    - 使用繁體中文回答
+    - 給出精簡且實用的答案
+    - 避免贅字和不必要的禮貌用語
+    - 適時使用emoji增加親和力
+    - 確保回答準確性
+    - 不確定時清楚說明`,
 };
 
 // 初始化 SDK
@@ -87,7 +92,7 @@ async function getGroqResponse(query, userId) {
     });
 
     const response = completion.choices[0].message.content
-      .replace(/<\/?think>/g, "")
+      .replace(/<think>[^]*?<\/think>/g, "")
       .trim();
 
     return response;
