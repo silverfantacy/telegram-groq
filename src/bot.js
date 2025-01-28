@@ -59,12 +59,18 @@ class ConversationManager {
   // 獲取可讀性的歷史記錄
   getReadableHistory(userId) {
     const history = this.getHistory(userId);
-    if (history.length === 0) return "暫無對話記錄";
+    if (history.length === 0) return "<i>暫無對話記錄</i>";
 
     return history
       .map((msg, index) => {
-        const prefix = msg.role === "user" ? "👤" : "🤖";
-        return `${prefix} ${msg.content}`;
+        const prefix =
+          msg.role === "user" ? "👤 <b>使用者</b>" : "🤖 <b>AI助手</b>";
+        const content = msg.content
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+        // 用 <code> 標籤包裝程式碼片段（如果需要的話）
+        return `${prefix}\n<pre>${content}</pre>`;
       })
       .join("\n\n");
   }
@@ -140,7 +146,11 @@ bot.command("clear", (ctx) => {
 bot.command("history", async (ctx) => {
   const userId = ctx.from.id;
   const history = conversationManager.getReadableHistory(userId);
-  await ctx.reply(history, { parse_mode: "HTML" });
+  await ctx.reply(history, {
+    parse_mode: "HTML",
+    // 可選：如果訊息太長，可以設置禁用網頁預覽
+    disable_web_page_preview: true,
+  });
 });
 
 // 按鈕回調處理
