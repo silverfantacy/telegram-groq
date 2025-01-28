@@ -1,6 +1,5 @@
 import { Bot } from "grammy";
 import Groq from "groq-sdk";
-import translate from 'translate'; // Import a translation library (add this to your project dependencies)
 
 // Initialize Groq with API key
 const groq = new Groq({
@@ -29,9 +28,8 @@ async function getGroqResponse(query) {
       top_p: 1,
     });
 
-    // Translate the response to traditional Chinese
-    const translatedContent = await translate(completion.choices[0].message.content, { to: 'zh-TW' });
-    return translatedContent;
+    // Directly return the response content
+    return completion.choices[0].message.content;
   } catch (error) {
     console.error("Error getting Groq response:", error);
     return "抱歉，發生錯誤。請稍後再試。";
