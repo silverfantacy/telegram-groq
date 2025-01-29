@@ -97,15 +97,52 @@ async function getGroqResponse(query, userId) {
       top_p: 1,
     });
 
-    const response = completion.choices[0].message.content
-      .replace(/<think>[^]*?<\/think>/g, "")
-      .trim();
+    const response = formatResponse(completion.choices[0].message.content);
 
     return response;
   } catch (error) {
     console.error("Groq API Error:", error);
     throw new Error("與 AI 服務通訊時發生錯誤");
   }
+}
+
+function formatResponse(text) {
+  // 首先移除第一個 think 標籤區塊
+  text = text.replace(/<think>.*?<\/think>/s, "").trim();
+
+  // 處理程式碼區塊
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, language, code) => {
+    // 移除程式碼中可能存在的 HTML 特殊字符
+    code = code
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .trim();
+
+    // 如果有指定語言，將其加入到格式化後的代碼中
+    const languageLabel = language ? `<b>${language}:</b>\n` : "";
+    return `${languageLabel}<pre><code>${code}</code></pre>`;
+  });
+
+  // 處理一般文本中的 HTML 特殊字符
+  // 但排除已經處理過的 <pre> 和 <code> 標籤內容
+  text = text.replace(
+    /(<pre>.*?<\/pre>)|([^<]+)/gs,
+    (match, insidePre, plainText) => {
+      if (insidePre) {
+        return match; // 保持 pre 標籤內的內容不變
+      }
+      if (plainText) {
+        return plainText
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+      return match;
+    },
+  );
+
+  return text;
 }
 
 // 指令處理
@@ -180,12 +217,21 @@ bot.on("message:text", async (ctx) => {
     // 獲取 AI 回應
     const response = await getGroqResponse(userMessage, userId);
 
-    // 添加對話到歷史記錄
-    conversationManager.addMessage(userId, userMessage, response);
-
+    // 添加解析模式
     await ctx.reply(response, {
       reply_to_message_id: ctx.message.message_id,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
     });
+
+    // 儲存原始回應（不含HTML標籤）到歷史記錄
+    const plainResponse = response
+      .replace(/<[^>]+>/g, "") // 移除所有HTML標籤
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+
+    conversationManager.addMessage(userId, userMessage, plainResponse);
   } catch (error) {
     console.error("Error:", error);
     await ctx.reply("抱歉,處理您的訊息時發生錯誤。請稍後再試。");
