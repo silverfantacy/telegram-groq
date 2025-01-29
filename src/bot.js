@@ -112,35 +112,30 @@ function formatResponse(text) {
 
   // 處理程式碼區塊
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, language, code) => {
-    // 移除程式碼中可能存在的 HTML 特殊字符
-    code = code
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .trim();
-
-    // 如果有指定語言，將其加入到格式化後的代碼中
-    const languageLabel = language ? `<b>${language}:</b>\n` : "";
+    code = code.trim();
+    const languageLabel = language ? `${language}:\n` : "";
     return `${languageLabel}<pre><code>${code}</code></pre>`;
   });
 
+  // 處理 Markdown 風格的程式碼區塊標記
+  text = text.replace(/###\s+(.*?)\n/g, "<b>$1</b>\n");
+
   // 處理一般文本中的 HTML 特殊字符
-  // 但排除已經處理過的 <pre> 和 <code> 標籤內容
-  text = text.replace(
-    /(<pre>.*?<\/pre>)|([^<]+)/gs,
-    (match, insidePre, plainText) => {
-      if (insidePre) {
-        return match; // 保持 pre 標籤內的內容不變
-      }
-      if (plainText) {
-        return plainText
+  text = text
+    .split(/<pre><code>|<\/code><\/pre>/g)
+    .map((part, index) => {
+      if (index % 2 === 0) {
+        // 非代碼區塊：轉義 HTML 特殊字符
+        return part
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;");
+      } else {
+        // 代碼區塊：保持原樣
+        return `<pre><code>${part}</code></pre>`;
       }
-      return match;
-    },
-  );
+    })
+    .join("");
 
   return text;
 }
@@ -211,25 +206,30 @@ bot.on("message:text", async (ctx) => {
   const userMessage = ctx.message.text;
 
   try {
-    // 顯示正在輸入狀態
     await ctx.replyWithChatAction("typing");
 
-    // 獲取 AI 回應
     const response = await getGroqResponse(userMessage, userId);
 
-    // 添加解析模式
-    await ctx.reply(response, {
-      reply_to_message_id: ctx.message.message_id,
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-    });
+    // 分段發送較長的消息
+    const maxLength = 4000; // Telegram 消息長度限制
+    if (response.length > maxLength) {
+      const chunks = response.match(new RegExp(`.{1,${maxLength}}`, "g")) || [];
+      for (const chunk of chunks) {
+        await ctx.reply(chunk, {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        });
+      }
+    } else {
+      await ctx.reply(response, {
+        reply_to_message_id: ctx.message.message_id,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      });
+    }
 
-    // 儲存原始回應（不含HTML標籤）到歷史記錄
-    const plainResponse = response
-      .replace(/<[^>]+>/g, "") // 移除所有HTML標籤
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&amp;/g, "&");
+    // 儲存純文本版本到歷史記錄
+    const plainResponse = response.replace(/<[^>]+>/g, "").trim();
 
     conversationManager.addMessage(userId, userMessage, plainResponse);
   } catch (error) {
