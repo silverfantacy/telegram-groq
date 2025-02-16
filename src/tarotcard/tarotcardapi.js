@@ -54,7 +54,7 @@ class TarotCardAPI {
     // Interpret first card
     const card1Interpretation = await interpretCallback([{
       role: "system",
-      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀。
+      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀，盡量把卡片名稱翻譯成繁體中文的用法。
 使用者的問題是：${userState.question}
 使用者抽到的三張牌是：${selectedCards.map(card => card.name).join(", ")}`
     }, {
@@ -70,7 +70,7 @@ class TarotCardAPI {
     // Interpret second card
     const card2Interpretation = await interpretCallback([{
       role: "system",
-      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀。
+      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀，盡量把卡片名稱翻譯成繁體中文的用法。
 使用者的問題是：${userState.question}
 使用者抽到的三張牌是：${selectedCards.map(card => card.name).join(", ")}`
     }, {
@@ -86,7 +86,7 @@ class TarotCardAPI {
     // Interpret third card
     const card3Interpretation = await interpretCallback([{
       role: "system",
-      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀。
+      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀，盡量把卡片名稱翻譯成繁體中文的用法。
 使用者的問題是：${userState.question}
 使用者抽到的三張牌是：${selectedCards.map(card => card.name).join(", ")}`
     }, {
@@ -102,7 +102,7 @@ class TarotCardAPI {
     // Overall interpretation
     const overallInterpretation = await interpretCallback([{
       role: "system",
-      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀。
+      content: `你是一位塔羅牌讀者，擅長根據問題和抽到的牌提供深入的解讀，盡量把卡片名稱翻譯成繁體中文的用法。
 使用者的問題是：${userState.question}
 使用者抽到的三張牌是：${selectedCards.map(card => card.name).join(", ")}`
     }, {

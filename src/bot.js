@@ -144,6 +144,11 @@ function formatResponse(text) {
   return text;
 }
 
+// 轉義 MarkdownV2 特殊字符的輔助函數
+function escapeMarkdownV2(text) {
+  return text.replace(/([\\_*\[\]()~`>#+=\-|{}.!])/g, '\\$1');
+}
+
 // 指令處理
 bot.command("start", (ctx) => {
   ctx.reply(
@@ -240,10 +245,11 @@ bot.on("message:text", async (ctx) => {
               top_p: 1,
             });
             // Filter out think tags and escape special characters for MarkdownV2
-            return completion.choices[0].message.content
-              .replace(/<think>.*?<\/think>/gs, "")
-              .trim()
-              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+            return escapeMarkdownV2(
+              completion.choices[0].message.content
+                .replace(/<think>.*?<\/think>/gs, "")
+                .trim()
+            );
           };
 
           const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
@@ -255,9 +261,8 @@ bot.on("message:text", async (ctx) => {
               await ctx.reply("━━━━━━━━━━━━━━");
             }
 
-            // Format the card name
-            const cardName = `🎴 *牌面：${cardResult.card.name}*`
-              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+            // Format the card name and escape all special characters
+            const cardName = escapeMarkdownV2(`🎴 *牌面：${cardResult.card.name}*`);
 
             // Send image with card name
             await ctx.replyWithPhoto(
@@ -268,11 +273,8 @@ bot.on("message:text", async (ctx) => {
               }
             );
 
-            // Send interpretation separately
-            const formattedInterpretation = cardResult.interpretation
-              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
-
-            await ctx.reply(formattedInterpretation, {
+            // Send interpretation separately with escaped special characters
+            await ctx.reply(escapeMarkdownV2(cardResult.interpretation), {
               parse_mode: "MarkdownV2"
             });
           }
@@ -280,16 +282,15 @@ bot.on("message:text", async (ctx) => {
           // Separator before overall interpretation
           await ctx.reply("━━━━━━━━━━━━━━");
 
-          // Send overall interpretation
-          const formattedOverall = `🔮 *綜合解讀：*\n\n${result.overallInterpretation}`
-              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+          // Send overall interpretation with escaped special characters
+          const formattedOverall = escapeMarkdownV2(`🔮 *綜合解讀：*\n\n${result.overallInterpretation}`);
 
           await ctx.reply(formattedOverall, {
             parse_mode: "MarkdownV2"
           });
           
-          // Final message
-          await ctx.reply("✨ *塔羅牌占卜結束*\\. 您可以輸入 /tarot 開始新的占卜\\.", {
+          // Final message with escaped special characters
+          await ctx.reply(escapeMarkdownV2("✨ *塔羅牌占卜結束*\\. 您可以輸入 /tarot 開始新的占卜\\."), {
             parse_mode: "MarkdownV2"
           });
           return;
