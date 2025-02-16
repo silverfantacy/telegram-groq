@@ -395,15 +395,140 @@ bot.on("message:text", async (ctx) => {
   }
 });
 
-// 設置命令提示
-bot.api.setMyCommands([
-  { command: "start", description: "開始使用" },
-  { command: "setmodel", description: "設定模型" },
-  { command: "currentmodel", description: "顯示目前使用的模型" },
-  { command: "clear", description: "清除對話歷史" },
-  { command: "history", description: "查看對話歷史" },
-  { command: "tarot", description: "開始塔羅牌占卜" }
-]);
+// 按鈕回調處理
+bot.on("callback_query:data", async (ctx) => {
+  const data = ctx.callbackQuery.data;
+
+  if (data.startsWith("model:")) {
+    const newModel = data.split(":")[1];
+    if (models.includes(newModel)) {
+      currentModel = newModel;
+      await ctx.reply(`已切換至模型: ${newModel}`);
+    }
+  }
+
+  await ctx.answerCallbackQuery();
+});
+
+// 文字訊息處理
+bot.on("message:text", async (ctx) => {
+  const userId = ctx.from.id;
+  const userMessage = ctx.message.text;
+
+  // Check if user is in a tarot reading session
+  const tarotState = tarotAPI.getUserState(userId);
+  
+  if (tarotState) {
+    try {
+      switch (tarotState.step) {
+        case "waiting_question":
+          const questionResponse = tarotAPI.setQuestion(userId, userMessage);
+          await ctx.reply(questionResponse);
+          return;
+
+        case "waiting_numbers":
+          await ctx.replyWithChatAction("typing");
+          
+          const interpretCallback = async (messages) => {
+            const completion = await groq.chat.completions.create({
+              messages,
+              model: currentModel,
+              temperature: CONFIG.temperature,
+              max_tokens: CONFIG.maxTokens,
+              top_p: 1,
+            });
+            
+            // Filter out think tags and handle formatting
+            let content = completion.choices[0].message.content
+              .replace(/<think>.*?<\/think>/gs, "")
+              .trim();
+              
+            // 確保返回的內容被正確格式化
+            return content;
+          };
+
+          const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
+
+          // Send card interpretations one by one with images
+          for (const cardResult of result.cards) {
+            // Add a separator before each card (except the first one)
+            if (result.cards.indexOf(cardResult) !== 0) {
+              await ctx.reply(formatTarotText('', 'separator'), {
+                parse_mode: "MarkdownV2"
+              });
+            }
+
+            // Send image with card name
+            await ctx.replyWithPhoto(
+              `https://media.virtualxnews.com${cardResult.card.image}`,
+              {
+                caption: formatTarotText(cardResult.card.name, 'cardTitle'),
+                parse_mode: "MarkdownV2"
+              }
+            );
+
+            // Send interpretation with proper formatting for bold text
+            await ctx.reply(formatTarotText(cardResult.interpretation, 'interpretation'), {
+              parse_mode: "MarkdownV2"
+            });
+          }
+
+          // Separator before overall interpretation
+          await ctx.reply(formatTarotText('', 'separator'), {
+            parse_mode: "MarkdownV2"
+          });
+
+          // Send overall interpretation with proper escaping
+          const overallMessage = formatTarotText(result.overallInterpretation, 'overall');
+          await ctx.reply(overallMessage, {
+            parse_mode: "MarkdownV2"
+          });
+          
+          // Final message with proper escaping
+          await ctx.reply(formatTarotText('', 'final'), {
+            parse_mode: "MarkdownV2"
+          });
+          return;
+      }
+    } catch (error) {
+      await ctx.reply(error.message);
+      return;
+    }
+  }
+
+  // Handle regular chat if not in tarot session
+  try {
+    await ctx.replyWithChatAction("typing");
+
+    const response = await getGroqResponse(userMessage, userId);
+
+    // 分段發送較長的消息
+    const maxLength = 4000; // Telegram 消息長度限制
+    if (response.length > maxLength) {
+      const chunks = response.match(new RegExp(`.{1,${maxLength}}`, "g")) || [];
+      for (const chunk of chunks) {
+        await ctx.reply(chunk, {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        });
+      }
+    } else {
+      await ctx.reply(response, {
+        reply_to_message_id: ctx.message.message_id,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      });
+    }
+
+    // 儲存純文本版本到歷史記錄
+    const plainResponse = response.replace(/<[^>]+>/g, "").trim();
+
+    conversationManager.addMessage(userId, userMessage, plainResponse);
+  } catch (error) {
+    console.error("Error:", error);
+    await ctx.reply("抱歉,處理您的訊息時發生錯誤。請稍後再試。");
+  }
+});
 
 // 全局錯誤處理
 bot.catch((err) => {
@@ -412,3 +537,21 @@ bot.catch((err) => {
 
 // 啟動機器人
 bot.start();
+
+// 設置命令提示，並處理可能的錯誤
+(async () => {
+  try {
+    await bot.api.setMyCommands([
+      { command: "start", description: "開始使用" },
+      { command: "setmodel", description: "設定模型" },
+      { command: "currentmodel", description: "顯示目前使用的模型" },
+      { command: "clear", description: "清除對話歷史" },
+      { command: "history", description: "查看對話歷史" },
+      { command: "tarot", description: "開始塔羅牌占卜" }
+    ]);
+    console.log("Bot commands set successfully");
+  } catch (error) {
+    console.warn("Failed to set bot commands:", error.message);
+    // 機器人仍然可以運行，即使命令設置失敗
+  }
+})();
