@@ -1,4 +1,4 @@
-import tarotcard from "./tarotcard";
+import tarotcard from "./tarotcard.js";
 
 const cards = tarotcard;
 
