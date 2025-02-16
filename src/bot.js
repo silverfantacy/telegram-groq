@@ -246,20 +246,30 @@ bot.on("message:text", async (ctx) => {
 
           // Send card interpretations one by one with images
           for (const cardResult of result.cards) {
+            const formattedCaption = `🎴 *牌面：${cardResult.card.name}*\n\n${cardResult.interpretation}`
+              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+
             await ctx.replyWithPhoto(
               `https://media.virtualxnews.com${cardResult.card.image}`,
               {
-                caption: cardResult.interpretation,
-                parse_mode: "HTML"
+                caption: formattedCaption,
+                parse_mode: "MarkdownV2"
               }
             );
           }
 
           // Send overall interpretation
-          await ctx.reply("🔮 綜合解讀：\n\n" + result.overallInterpretation);
+          const formattedOverall = `🔮 *綜合解讀：*\n\n${result.overallInterpretation}`
+              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+
+          await ctx.reply(formattedOverall, {
+            parse_mode: "MarkdownV2"
+          });
           
           // Final message
-          await ctx.reply("塔羅牌占卜結束。您可以輸入 /tarot 開始新的占卜。");
+          await ctx.reply("✨ *塔羅牌占卜結束*\\. 您可以輸入 /tarot 開始新的占卜\\.", {
+            parse_mode: "MarkdownV2"
+          });
           return;
       }
     } catch (error) {
