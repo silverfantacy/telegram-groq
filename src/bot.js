@@ -247,7 +247,7 @@ bot.on("message:text", async (ctx) => {
           // Send card interpretations one by one
           for (const cardResult of result.cards) {
             await ctx.reply(cardResult.interpretation);
-            await ctx.replyWithPhoto(cardResult.card.image);
+            await ctx.replyWithPhoto(`./tarotdeck${cardResult.card.image}`);
           }
 
           // Send overall interpretation
