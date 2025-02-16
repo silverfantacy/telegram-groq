@@ -1,5 +1,6 @@
 import { Bot } from "grammy";
 import Groq from "groq-sdk";
+import TarotCardAPI from "./tarotcard/tarotcardapi.js";
 
 // 配置
 const CONFIG = {
@@ -19,6 +20,9 @@ const CONFIG = {
 // 初始化 SDK
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
+
+// Initialize TarotCard API
+const tarotAPI = new TarotCardAPI();
 
 // 模型設置
 const models = process.env.GROQ_MODELS?.split(",") || [CONFIG.defaultModel];
@@ -148,7 +152,8 @@ bot.command("start", (ctx) => {
       "/setmodel - 切換模型\n" +
       "/currentmodel - 查看當前模型\n" +
       "/clear - 清除對話歷史\n" +
-      "/history - 查看對話歷史",
+      "/history - 查看對話歷史\n" +
+      "/tarot - 開始塔羅牌占卜"
   );
 });
 
@@ -185,6 +190,13 @@ bot.command("history", async (ctx) => {
   });
 });
 
+// Add tarot command
+bot.command("tarot", async (ctx) => {
+  const userId = ctx.from.id;
+  const response = tarotAPI.startReading(userId);
+  await ctx.reply(response);
+});
+
 // 按鈕回調處理
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data;
@@ -205,6 +217,53 @@ bot.on("message:text", async (ctx) => {
   const userId = ctx.from.id;
   const userMessage = ctx.message.text;
 
+  // Check if user is in a tarot reading session
+  const tarotState = tarotAPI.getUserState(userId);
+  
+  if (tarotState) {
+    try {
+      switch (tarotState.step) {
+        case "waiting_question":
+          const questionResponse = tarotAPI.setQuestion(userId, userMessage);
+          await ctx.reply(questionResponse);
+          return;
+
+        case "waiting_numbers":
+          await ctx.replyWithChatAction("typing");
+          
+          const interpretCallback = async (messages) => {
+            const completion = await groq.chat.completions.create({
+              messages,
+              model: currentModel,
+              temperature: CONFIG.temperature,
+              max_tokens: CONFIG.maxTokens,
+              top_p: 1,
+            });
+            return completion.choices[0].message.content;
+          };
+
+          const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
+
+          // Send card interpretations one by one
+          for (const cardResult of result.cards) {
+            await ctx.reply(cardResult.interpretation);
+            await ctx.replyWithPhoto(cardResult.card.image);
+          }
+
+          // Send overall interpretation
+          await ctx.reply("🔮 綜合解讀：\n\n" + result.overallInterpretation);
+          
+          // Final message
+          await ctx.reply("塔羅牌占卜結束。您可以輸入 /tarot 開始新的占卜。");
+          return;
+      }
+    } catch (error) {
+      await ctx.reply(error.message);
+      return;
+    }
+  }
+
+  // Handle regular chat if not in tarot session
   try {
     await ctx.replyWithChatAction("typing");
 
@@ -245,6 +304,7 @@ bot.api.setMyCommands([
   { command: "currentmodel", description: "顯示目前使用的模型" },
   { command: "clear", description: "清除對話歷史" },
   { command: "history", description: "查看對話歷史" },
+  { command: "tarot", description: "開始塔羅牌占卜" }
 ]);
 
 // 全局錯誤處理
