@@ -144,9 +144,16 @@ function formatResponse(text) {
   return text;
 }
 
-// 轉義 MarkdownV2 特殊字符的輔助函數
+// 轉義 MarkdownV2 特殊字符的輔助函數，並確保標記符號前後有空格
 function escapeMarkdownV2(text) {
-  return text.replace(/([\\_*\[\]()~`>#+=\-|{}.!])/g, '\\$1');
+  // 先處理粗體和斜體標記
+  text = text
+    .replace(/\*\*(.+?)\*\*/g, ' *$1* ')  // 將雙星號改為單星號並確保前後有空格
+    .replace(/\*(?!\s)(.+?)(?<!\s)\*/g, ' *$1* ') // 確保單星號前後有空格
+    .trim();
+
+  // 再轉義其他特殊字符
+  return text.replace(/([_[\]()~`>#+=\-|{}.!])/g, '\\$1');
 }
 
 // 指令處理
@@ -244,12 +251,14 @@ bot.on("message:text", async (ctx) => {
               max_tokens: CONFIG.maxTokens,
               top_p: 1,
             });
-            // Filter out think tags and escape special characters for MarkdownV2
-            return escapeMarkdownV2(
-              completion.choices[0].message.content
-                .replace(/<think>.*?<\/think>/gs, "")
-                .trim()
-            );
+            
+            // Filter out think tags and format the content
+            const content = completion.choices[0].message.content
+              .replace(/<think>.*?<\/think>/gs, "")
+              .trim();
+            
+            // 轉義特殊字符並保持格式
+            return escapeMarkdownV2(content);
           };
 
           const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
@@ -261,8 +270,8 @@ bot.on("message:text", async (ctx) => {
               await ctx.reply("━━━━━━━━━━━━━━");
             }
 
-            // Format the card name and escape all special characters
-            const cardName = escapeMarkdownV2(`🎴 *牌面：${cardResult.card.name}*`);
+            // Format the card name with proper spacing
+            const cardName = escapeMarkdownV2(`🎴 __牌面：${cardResult.card.name}__`);
 
             // Send image with card name
             await ctx.replyWithPhoto(
@@ -273,8 +282,12 @@ bot.on("message:text", async (ctx) => {
               }
             );
 
-            // Send interpretation separately with escaped special characters
-            await ctx.reply(escapeMarkdownV2(cardResult.interpretation), {
+            // Format interpretation with proper spacing for bold text
+            const formattedInterpretation = cardResult.interpretation
+              .replace(/\*\*(.+?)\*\*/g, ' **$1** ')  // 確保粗體標記前後有空格
+              .trim();
+
+            await ctx.reply(escapeMarkdownV2(formattedInterpretation), {
               parse_mode: "MarkdownV2"
             });
           }
@@ -282,14 +295,14 @@ bot.on("message:text", async (ctx) => {
           // Separator before overall interpretation
           await ctx.reply("━━━━━━━━━━━━━━");
 
-          // Send overall interpretation with escaped special characters
+          // Format overall interpretation
           const formattedOverall = escapeMarkdownV2(`🔮 *綜合解讀：*\n\n${result.overallInterpretation}`);
 
-          await ctx.reply(formattedOverall, {
+          await ctx.reply(escapeMarkdownV2(formattedOverall), {
             parse_mode: "MarkdownV2"
           });
           
-          // Final message with escaped special characters
+          // Final message
           await ctx.reply(escapeMarkdownV2("✨ *塔羅牌占卜結束*\\. 您可以輸入 /tarot 開始新的占卜\\."), {
             parse_mode: "MarkdownV2"
           });
