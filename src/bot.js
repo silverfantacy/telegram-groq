@@ -381,7 +381,7 @@ bot.on("message:text", async (ctx) => {
             await ctx.replyWithPhoto(
               `https://media.virtualxnews.com${cardResult.card.image}`,
               {
-                caption: `🎴 牌面：${cardResult.card.name}`,
+                caption: `🎴 牌面：${cardResult.card.chineseName || cardResult.card.name}${cardResult.card.isReversed ? '（逆位）' : '（正位）'}`,
               }
             );
 
