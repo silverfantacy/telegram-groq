@@ -23,7 +23,10 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 // 配置 bot 客戶端選項
 const botClientConfig = {
   client: {
-    timeoutSeconds: 60 // 增加超時時間
+    timeoutSeconds: 60, // 增加超時時間
+    apiRoot: "https://api.telegram.org",
+    retries: 3, // 添加重試次數
+    retry_after: 1000 // 重試間隔（毫秒）
   }
 };
 
@@ -257,6 +260,24 @@ bot.command("tarot", async (ctx) => {
   await ctx.reply(response);
 });
 
+// 添加管理員命令來設置 bot 命令
+bot.command("setupcommands", async (ctx) => {
+  try {
+    await bot.api.setMyCommands([
+      { command: "start", description: "開始使用" },
+      { command: "setmodel", description: "設定模型" },
+      { command: "currentmodel", description: "顯示目前使用的模型" },
+      { command: "clear", description: "清除對話歷史" },
+      { command: "history", description: "查看對話歷史" },
+      { command: "tarot", description: "開始塔羅牌占卜" }
+    ]);
+    await ctx.reply("Bot commands set successfully");
+  } catch (error) {
+    console.warn("Failed to set bot commands:", error.message);
+    await ctx.reply("Failed to set bot commands: " + error.message);
+  }
+});
+
 // 按鈕回調處理
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data;
@@ -384,24 +405,17 @@ bot.catch((err) => {
   console.error("Bot error:", err);
 });
 
-// 啟動機器人
-console.log("Starting bot...");
-bot.start();
-
-// 設置命令提示，並處理可能的錯誤
-(async () => {
+// 創建啟動函數
+async function startBot() {
   try {
-    await bot.api.setMyCommands([
-      { command: "start", description: "開始使用" },
-      { command: "setmodel", description: "設定模型" },
-      { command: "currentmodel", description: "顯示目前使用的模型" },
-      { command: "clear", description: "清除對話歷史" },
-      { command: "history", description: "查看對話歷史" },
-      { command: "tarot", description: "開始塔羅牌占卜" }
-    ]);
-    console.log("Bot commands set successfully");
+    console.log("Starting bot...");
+    await bot.start();
+    console.log("Bot started successfully");
   } catch (error) {
-    console.warn("Failed to set bot commands:", error.message);
-    // 機器人仍然可以運行，即使命令設置失敗
+    console.error("Failed to start bot:", error);
+    process.exit(1);
   }
-})();
+}
+
+// 啟動機器人
+startBot();
