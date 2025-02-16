@@ -18,7 +18,15 @@ const CONFIG = {
 };
 
 // 初始化 SDK
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY || ''  // 確保有預設值
+});
+
+// 確保在使用前檢查 API 金鑰
+if (!process.env.GROQ_API_KEY) {
+  console.error('GROQ_API_KEY environment variable is not set');
+  process.exit(1);
+}
 
 // 配置 bot 客戶端選項
 const botClientConfig = {
@@ -147,6 +155,10 @@ const conversationManager = new ConversationManager();
 
 // API 請求處理
 async function getGroqResponse(query, userId) {
+  if (!groq) {
+    throw new Error('Groq API not initialized');
+  }
+
   try {
     const history = conversationManager.getHistory(userId);
 
@@ -156,6 +168,7 @@ async function getGroqResponse(query, userId) {
       { role: "user", content: query },
     ];
 
+    console.log('Sending request to Groq API...'); // 添加日誌
     const completion = await groq.chat.completions.create({
       messages,
       model: currentModel,
@@ -163,13 +176,20 @@ async function getGroqResponse(query, userId) {
       max_tokens: CONFIG.maxTokens,
       top_p: 1,
     });
+    console.log('Received response from Groq API'); // 添加日誌
+
+    if (!completion?.choices?.[0]?.message?.content) {
+      throw new Error('Invalid or empty response from Groq API');
+    }
 
     const response = formatResponse(completion.choices[0].message.content);
-
     return response;
   } catch (error) {
     console.error("Groq API Error:", error);
-    throw new Error("與 AI 服務通訊時發生錯誤");
+    if (error.message.includes('not defined')) {
+      console.error('API initialization error:', error);
+    }
+    throw new Error("與 AI 服務通訊時發生錯誤，請稍後再試");
   }
 }
 
@@ -195,7 +215,7 @@ function formatResponse(text) {
         // 非代碼區塊：轉義 HTML 特殊字符
         return part
           .replace(/&/g, "&amp;")
-          .replace(/<//g, "&lt;")
+          .replace(/</g, "&lt;")  // 修正這裡，原本是 /<//g
           .replace(/>/g, "&gt;");
       } else {
         // 代碼區塊：保持原樣
@@ -253,11 +273,16 @@ bot.command("history", async (ctx) => {
   });
 });
 
-// Add tarot command
+// 修改塔羅牌命令處理
 bot.command("tarot", async (ctx) => {
-  const userId = ctx.from.id;
-  const response = tarotAPI.startReading(userId);
-  await ctx.reply(response);
+  try {
+    const userId = ctx.from.id;
+    const response = tarotAPI.startReading(userId);
+    await ctx.reply(response);
+  } catch (error) {
+    console.error('Error starting tarot reading:', error);
+    await ctx.reply('開始塔羅牌占卜時發生錯誤，請稍後再試');
+  }
 });
 
 // 添加管理員命令來設置 bot 命令
@@ -293,7 +318,39 @@ bot.on("callback_query:data", async (ctx) => {
   await ctx.answerCallbackQuery();
 });
 
-// 文字訊息處理
+// 塔羅牌解讀回調函數
+async function createTarotInterpretCallback(ctx) {
+  return async (messages) => {
+    if (!groq) {
+      throw new Error('Groq API not initialized');
+    }
+
+    try {
+      console.log('Sending tarot interpretation request...'); // 添加日誌
+      const completion = await groq.chat.completions.create({
+        messages,
+        model: currentModel,
+        temperature: CONFIG.temperature,
+        max_tokens: CONFIG.maxTokens,
+        top_p: 1,
+      });
+      console.log('Received tarot interpretation response'); // 添加日誌
+
+      if (!completion?.choices?.[0]?.message?.content) {
+        throw new Error('Invalid tarot interpretation response');
+      }
+
+      return completion.choices[0].message.content
+        .replace(/<think>.*?<\/think>/gs, '')
+        .trim();
+    } catch (error) {
+      console.error('Tarot interpretation error:', error);
+      throw new Error('塔羅牌解讀時發生錯誤');
+    }
+  };
+}
+
+// 修改文字訊息處理中的塔羅牌部分
 bot.on("message:text", async (ctx) => {
   const userId = ctx.from.id;
   const userMessage = ctx.message.text;
@@ -312,56 +369,33 @@ bot.on("message:text", async (ctx) => {
         case "waiting_numbers":
           await ctx.replyWithChatAction("typing");
           
-          const interpretCallback = async (messages) => {
-            const completion = await groq.chat.completions.create({
-              messages,
-              model: currentModel,
-              temperature: CONFIG.temperature,
-              max_tokens: CONFIG.maxTokens,
-              top_p: 1,
-            });
-            return completion.choices[0].message.content;
-          };
-
+          const interpretCallback = await createTarotInterpretCallback(ctx);
           const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
 
           // Send card interpretations one by one with images
           for (const cardResult of result.cards) {
-            // Add a separator before each card (except the first one)
             if (result.cards.indexOf(cardResult) !== 0) {
-              await ctx.reply(formatTarotText('', 'separator'), {
-                parse_mode: "MarkdownV2"
-              });
+              await ctx.reply('───────────');
             }
 
-            // Send image with card name
             await ctx.replyWithPhoto(
               `https://media.virtualxnews.com${cardResult.card.image}`,
               {
-                caption: formatTarotText(cardResult.card.name, 'cardTitle'),
-                parse_mode: "MarkdownV2"
+                caption: `🎴 牌面：${cardResult.card.name}`,
               }
             );
 
-            // Send interpretation with proper formatting
-            await ctx.reply(formatTarotText(cardResult.interpretation, 'interpretation'), {
-              parse_mode: "MarkdownV2"
-            });
+            await ctx.reply(cardResult.interpretation);
           }
 
-          // Send overall interpretation
-          await ctx.reply(formatTarotText(result.overallInterpretation, 'overall'), {
-            parse_mode: "MarkdownV2"
-          });
-
-          // Final message with all special characters properly escaped
-          await ctx.reply(`✨ *${escapeSpecialChars('塔羅牌占卜結束')}*\n${escapeSpecialChars('您可以輸入')} /tarot ${escapeSpecialChars('開始新的占卜')}`, {
-            parse_mode: "MarkdownV2"
-          });
+          await ctx.reply('───────────');
+          await ctx.reply(`🔮 綜合解讀：\n\n${result.overallInterpretation}`);
+          await ctx.reply("✨ 塔羅牌占卜結束\n您可以輸入 /tarot 開始新的占卜");
           return;
       }
     } catch (error) {
-      await ctx.reply(error.message);
+      console.error('Tarot reading error:', error);
+      await ctx.reply('塔羅牌占卜過程中發生錯誤，請重新開始');
       return;
     }
   }
