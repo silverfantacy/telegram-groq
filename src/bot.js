@@ -239,24 +239,46 @@ bot.on("message:text", async (ctx) => {
               max_tokens: CONFIG.maxTokens,
               top_p: 1,
             });
-            return completion.choices[0].message.content;
+            // Filter out think tags and escape special characters for MarkdownV2
+            return completion.choices[0].message.content
+              .replace(/<think>.*?<\/think>/gs, "")
+              .trim()
+              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
           };
 
           const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
 
           // Send card interpretations one by one with images
           for (const cardResult of result.cards) {
-            const formattedCaption = `🎴 *牌面：${cardResult.card.name}*\n\n${cardResult.interpretation}`
+            // Add a separator before each card (except the first one)
+            if (result.cards.indexOf(cardResult) !== 0) {
+              await ctx.reply("━━━━━━━━━━━━━━");
+            }
+
+            // Format the card name
+            const cardName = `🎴 *牌面：${cardResult.card.name}*`
               .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 
+            // Send image with card name
             await ctx.replyWithPhoto(
               `https://media.virtualxnews.com${cardResult.card.image}`,
               {
-                caption: formattedCaption,
+                caption: cardName,
                 parse_mode: "MarkdownV2"
               }
             );
+
+            // Send interpretation separately
+            const formattedInterpretation = cardResult.interpretation
+              .replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+
+            await ctx.reply(formattedInterpretation, {
+              parse_mode: "MarkdownV2"
+            });
           }
+
+          // Separator before overall interpretation
+          await ctx.reply("━━━━━━━━━━━━━━");
 
           // Send overall interpretation
           const formattedOverall = `🔮 *綜合解讀：*\n\n${result.overallInterpretation}`
