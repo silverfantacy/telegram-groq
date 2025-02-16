@@ -244,10 +244,15 @@ bot.on("message:text", async (ctx) => {
 
           const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
 
-          // Send card interpretations one by one
+          // Send card interpretations one by one with images
           for (const cardResult of result.cards) {
-            await ctx.reply(cardResult.interpretation);
-            await ctx.replyWithPhoto(`https://media.virtualxnews.com${cardResult.card.image}`);
+            await ctx.replyWithPhoto(
+              `https://media.virtualxnews.com${cardResult.card.image}`,
+              {
+                caption: cardResult.interpretation,
+                parse_mode: "HTML"
+              }
+            );
           }
 
           // Send overall interpretation
