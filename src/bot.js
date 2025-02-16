@@ -144,6 +144,9 @@ function formatResponse(text) {
   return text;
 }
 
+// 常量定義
+const SEPARATOR = "───────────";
+
 // 轉義 MarkdownV2 特殊字符的輔助函數，並確保標記符號前後有空格
 function escapeMarkdownV2(text) {
   // 先處理粗體和斜體標記
@@ -154,6 +157,54 @@ function escapeMarkdownV2(text) {
 
   // 再轉義其他特殊字符
   return text.replace(/([_[\]()~`>#+=\-|{}.!])/g, '\\$1');
+}
+
+// 轉義特殊字符的輔助函數
+function escapeSpecialChars(text) {
+  return text.replace(/([_*[\]()~`>#+=\-|{}.!\\])/g, '\\$1');
+}
+
+// 處理粗體文本，確保標記前後有空格且正確轉義
+function formatBoldText(text) {
+  return text.replace(/\*\*(.+?)\*\*/g, (match, content) => {
+    // 先轉義內容中的特殊字符
+    const escapedContent = escapeSpecialChars(content.trim());
+    // 確保 * 前後有空格，並轉義星號本身
+    return ` \\*${escapedContent}\\* `;
+  });
+}
+
+// 格式化塔羅牌文本的輔助函數
+function formatTarotText(text, type = 'normal') {
+  let formatted = '';
+  
+  switch(type) {
+    case 'separator':
+      return escapeSpecialChars(SEPARATOR);
+    case 'cardName':
+      formatted = `🎴 ${escapeSpecialChars(text)}`; 
+      break;
+    case 'cardTitle':
+      // 確保標題的星號被正確轉義且前後有空格
+      formatted = `🎴 \\*${escapeSpecialChars(`牌面：${text}`)}\\*`; 
+      break;
+    case 'interpretation':
+      // 先處理粗體，再轉義剩餘特殊字符
+      formatted = formatBoldText(text);
+      break;
+    case 'overall':
+      // 確保標題和內容都被正確轉義
+      formatted = `🔮 \\*${escapeSpecialChars('綜合解讀')}\\*\n\n${formatBoldText(text)}`; 
+      break;
+    case 'final':
+      // 確保標題被正確轉義
+      formatted = `✨ \\*${escapeSpecialChars('塔羅牌占卜結束')}\\*\n${escapeSpecialChars('您可以輸入 /tarot 開始新的占卜')}`; 
+      break;
+    default:
+      formatted = escapeSpecialChars(text);
+  }
+  
+  return formatted;
 }
 
 // 指令處理
@@ -252,13 +303,13 @@ bot.on("message:text", async (ctx) => {
               top_p: 1,
             });
             
-            // Filter out think tags and format the content
-            const content = completion.choices[0].message.content
+            // Filter out think tags and handle formatting
+            let content = completion.choices[0].message.content
               .replace(/<think>.*?<\/think>/gs, "")
               .trim();
-            
-            // 轉義特殊字符並保持格式
-            return escapeMarkdownV2(content);
+              
+            // 確保返回的內容被正確格式化
+            return content;
           };
 
           const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
@@ -267,43 +318,39 @@ bot.on("message:text", async (ctx) => {
           for (const cardResult of result.cards) {
             // Add a separator before each card (except the first one)
             if (result.cards.indexOf(cardResult) !== 0) {
-              await ctx.reply("━━━━━━━━━━━━━━");
+              await ctx.reply(formatTarotText('', 'separator'), {
+                parse_mode: "MarkdownV2"
+              });
             }
-
-            // Format the card name with proper spacing
-            const cardName = escapeMarkdownV2(`🎴 __牌面：${cardResult.card.name}__`);
 
             // Send image with card name
             await ctx.replyWithPhoto(
               `https://media.virtualxnews.com${cardResult.card.image}`,
               {
-                caption: cardName,
+                caption: formatTarotText(cardResult.card.name, 'cardTitle'),
                 parse_mode: "MarkdownV2"
               }
             );
 
-            // Format interpretation with proper spacing for bold text
-            const formattedInterpretation = cardResult.interpretation
-              .replace(/\*\*(.+?)\*\*/g, ' **$1** ')  // 確保粗體標記前後有空格
-              .trim();
-
-            await ctx.reply(escapeMarkdownV2(formattedInterpretation), {
+            // Send interpretation with proper formatting for bold text
+            await ctx.reply(formatTarotText(cardResult.interpretation, 'interpretation'), {
               parse_mode: "MarkdownV2"
             });
           }
 
           // Separator before overall interpretation
-          await ctx.reply("━━━━━━━━━━━━━━");
+          await ctx.reply(formatTarotText('', 'separator'), {
+            parse_mode: "MarkdownV2"
+          });
 
-          // Format overall interpretation
-          const formattedOverall = escapeMarkdownV2(`🔮 *綜合解讀：*\n\n${result.overallInterpretation}`);
-
-          await ctx.reply(escapeMarkdownV2(formattedOverall), {
+          // Send overall interpretation with proper escaping
+          const overallMessage = formatTarotText(result.overallInterpretation, 'overall');
+          await ctx.reply(overallMessage, {
             parse_mode: "MarkdownV2"
           });
           
-          // Final message
-          await ctx.reply(escapeMarkdownV2("✨ *塔羅牌占卜結束*\\. 您可以輸入 /tarot 開始新的占卜\\."), {
+          // Final message with proper escaping
+          await ctx.reply(formatTarotText('', 'final'), {
             parse_mode: "MarkdownV2"
           });
           return;
