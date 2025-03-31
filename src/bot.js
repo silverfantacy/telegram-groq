@@ -56,14 +56,12 @@ const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN, botClientConfig);
 // Initialize TarotCard API
 const tarotAPI = new TarotCardAPI();
 
+// 初始化塔羅牌會話管理
+const tarotSessions = new Map();
+
 // 模型設置
 const groqModels = process.env.GROQ_MODELS?.split(",") || [CONFIG.defaultModel];
 const allModels = [...groqModels];
-
-// 如果 Grok API 金鑰存在，添加 Grok 2 模型
-if (process.env.GROK_API_KEY) {
-  allModels.push("grok-2-latest");
-}
 
 let currentModel = allModels[0];
 
