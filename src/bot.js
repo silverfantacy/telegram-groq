@@ -330,6 +330,40 @@ bot.command("model", async (ctx) => {
   });
 });
 
+// 塔羅牌占卜指令
+bot.command("tarot", async (ctx) => {
+  const userId = ctx.from.id;
+  
+  // 檢查是否已經有進行中的塔羅牌會話
+  if (tarotSessions.has(userId)) {
+    await ctx.reply("您已經有一個進行中的塔羅牌占卜。請先完成當前的占卜，或輸入 /cancel 取消。");
+    return;
+  }
+  
+  // 創建新的塔羅牌會話
+  tarotSessions.set(userId, {
+    state: "waiting_for_question",
+    question: null,
+    spread: null,
+    cards: []
+  });
+  
+  await ctx.reply(formatTarotText("歡迎使用塔羅牌占卜功能！"));
+  await ctx.reply(formatTarotText("請告訴我您想諮詢的問題（例如：感情、事業、短期發展等）"));
+});
+
+// 取消命令 - 用於取消塔羅牌占卜等進行中的操作
+bot.command("cancel", async (ctx) => {
+  const userId = ctx.from.id;
+  
+  if (tarotSessions.has(userId)) {
+    tarotSessions.delete(userId);
+    await ctx.reply("塔羅牌占卜已取消。");
+  } else {
+    await ctx.reply("您沒有進行中的操作可以取消。");
+  }
+});
+
 // 處理模型選擇的回調
 bot.callbackQuery(/^model:(.+)$/, async (ctx) => {
   const modelName = ctx.match[1];
@@ -369,6 +403,168 @@ bot.callbackQuery(/^model:(.+)$/, async (ctx) => {
   };
 
   await ctx.editMessageReplyMarkup(keyboard);
+});
+
+// 處理塔羅牌相關的回調
+bot.callbackQuery(/^tarot:(.+)$/, async (ctx) => {
+  const userId = ctx.from.id;
+  const action = ctx.match[1];
+  
+  // 檢查用戶是否有進行中的塔羅牌會話
+  if (!tarotSessions.has(userId)) {
+    await ctx.answerCallbackQuery({
+      text: "您沒有進行中的塔羅牌占卜。請輸入 /tarot 開始新的占卜。",
+      show_alert: true
+    });
+    return;
+  }
+  
+  const session = tarotSessions.get(userId);
+  
+  // 處理取消操作
+  if (action === "cancel") {
+    tarotSessions.delete(userId);
+    await ctx.answerCallbackQuery({
+      text: "塔羅牌占卜已取消。",
+      show_alert: true
+    });
+    await ctx.editMessageText("塔羅牌占卜已取消。");
+    return;
+  }
+  
+  // 處理牌陣選擇
+  if (action.startsWith("spread:")) {
+    const spreadType = action.split(":")[1];
+    session.spread = spreadType;
+    session.state = "drawing_cards";
+    
+    await ctx.answerCallbackQuery({
+      text: `已選擇${spreadType === "single" ? "單張牌陣" : spreadType === "three" ? "三張牌陣" : "凱爾特十字牌陣"}`
+    });
+    
+    // 根據不同牌陣類型進行處理
+    if (spreadType === "single") {
+      // 單張牌陣
+      const shuffledCards = tarotAPI.shuffleCards();
+      const randomIndex = Math.floor(Math.random() * shuffledCards.length);
+      const selectedCard = shuffledCards[randomIndex];
+      session.cards = [selectedCard];
+      
+      // 顯示抽到的牌
+      await ctx.editMessageText(formatTarotText("正在解讀您抽到的牌..."));
+      
+      // 使用 AI 解讀塔羅牌
+      try {
+        const prompt = `請以塔羅牌專家的身份，解讀以下塔羅牌對於問題「${session.question}」的含義：\n\n${selectedCard.name}${selectedCard.isReversed ? "（逆位）" : "（正位）"}\n\n請提供詳細、有洞察力的解讀，包括這張牌在此問題上的象徵意義、建議和可能的結果。回答限制在300字以內，使用繁體中文。`;
+        
+        const interpretation = await getAIResponse(prompt, userId);
+        
+        // 發送解讀結果
+        let message = formatTarotText(`您抽到的牌是：`, "cardTitle") + "\n\n";
+        message += formatTarotText(`${selectedCard.name}${selectedCard.isReversed ? "（逆位）" : "（正位）"}`, "cardName") + "\n\n";
+        message += formatTarotText(interpretation, "interpretation") + "\n\n";
+        message += formatTarotText("", "final");
+        
+        await ctx.editMessageText(message, { parse_mode: "MarkdownV2" });
+        
+        // 清除會話
+        tarotSessions.delete(userId);
+      } catch (error) {
+        console.error("Error interpreting tarot card:", error);
+        await ctx.editMessageText("解讀塔羅牌時發生錯誤，請稍後再試。");
+        tarotSessions.delete(userId);
+      }
+    } else if (spreadType === "three") {
+      // 三張牌陣
+      const shuffledCards = tarotAPI.shuffleCards();
+      const selectedCards = [];
+      
+      // 隨機選擇三張不重複的牌
+      const indices = new Set();
+      while (indices.size < 3) {
+        indices.add(Math.floor(Math.random() * shuffledCards.length));
+      }
+      
+      const indexArray = Array.from(indices);
+      selectedCards.push(shuffledCards[indexArray[0]]);
+      selectedCards.push(shuffledCards[indexArray[1]]);
+      selectedCards.push(shuffledCards[indexArray[2]]);
+      
+      session.cards = selectedCards;
+      
+      // 顯示抽到的牌
+      await ctx.editMessageText(formatTarotText("正在解讀您抽到的三張牌..."));
+      
+      // 使用 AI 解讀塔羅牌
+      try {
+        // 過去牌的解讀
+        const pastPrompt = `請以塔羅牌專家的身份，解讀以下塔羅牌作為「過去」對於問題「${session.question}」的含義：\n\n${selectedCards[0].name}${selectedCards[0].isReversed ? "（逆位）" : "（正位）"}\n\n請提供簡短但有洞察力的解讀，說明這張牌如何反映問題的過去基礎。回答限制在150字以內，使用繁體中文。`;
+        
+        const pastInterpretation = await getAIResponse(pastPrompt, userId);
+        
+        // 現在牌的解讀
+        const presentPrompt = `請以塔羅牌專家的身份，解讀以下塔羅牌作為「現在」對於問題「${session.question}」的含義：\n\n${selectedCards[1].name}${selectedCards[1].isReversed ? "（逆位）" : "（正位）"}\n\n請提供簡短但有洞察力的解讀，說明這張牌如何反映問題的當前狀況。回答限制在150字以內，使用繁體中文。`;
+        
+        const presentInterpretation = await getAIResponse(presentPrompt, userId);
+        
+        // 未來牌的解讀
+        const futurePrompt = `請以塔羅牌專家的身份，解讀以下塔羅牌作為「未來」對於問題「${session.question}」的含義：\n\n${selectedCards[2].name}${selectedCards[2].isReversed ? "（逆位）" : "（正位）"}\n\n請提供簡短但有洞察力的解讀，說明這張牌如何預示問題的可能發展。回答限制在150字以內，使用繁體中文。`;
+        
+        const futureInterpretation = await getAIResponse(futurePrompt, userId);
+        
+        // 綜合解讀
+        const overallPrompt = `請以塔羅牌專家的身份，綜合解讀以下三張塔羅牌對於問題「${session.question}」的整體含義：\n\n過去：${selectedCards[0].name}${selectedCards[0].isReversed ? "（逆位）" : "（正位）"}\n現在：${selectedCards[1].name}${selectedCards[1].isReversed ? "（逆位）" : "（正位）"}\n未來：${selectedCards[2].name}${selectedCards[2].isReversed ? "（逆位）" : "（正位）"}\n\n請提供全面的綜合解讀，包括這三張牌如何互相關聯、整體故事線以及對問題的建議。回答限制在250字以內，使用繁體中文。`;
+        
+        const overallInterpretation = await getAIResponse(overallPrompt, userId);
+        
+        // 發送解讀結果
+        let message = formatTarotText("三張牌陣解讀：過去、現在、未來", "cardTitle") + "\n\n";
+        
+        // 過去牌
+        message += formatTarotText("過去：", "cardName") + "\n";
+        message += formatTarotText(`${selectedCards[0].name}${selectedCards[0].isReversed ? "（逆位）" : "（正位）"}`, "cardName") + "\n";
+        message += formatTarotText(pastInterpretation, "interpretation") + "\n\n";
+        
+        // 現在牌
+        message += formatTarotText("現在：", "cardName") + "\n";
+        message += formatTarotText(`${selectedCards[1].name}${selectedCards[1].isReversed ? "（逆位）" : "（正位）"}`, "cardName") + "\n";
+        message += formatTarotText(presentInterpretation, "interpretation") + "\n\n";
+        
+        // 未來牌
+        message += formatTarotText("未來：", "cardName") + "\n";
+        message += formatTarotText(`${selectedCards[2].name}${selectedCards[2].isReversed ? "（逆位）" : "（正位）"}`, "cardName") + "\n";
+        message += formatTarotText(futureInterpretation, "interpretation") + "\n\n";
+        
+        // 綜合解讀
+        message += formatTarotText(overallInterpretation, "overall") + "\n\n";
+        message += formatTarotText("", "final");
+        
+        await ctx.editMessageText(message, { parse_mode: "MarkdownV2" });
+        
+        // 清除會話
+        tarotSessions.delete(userId);
+      } catch (error) {
+        console.error("Error interpreting tarot cards:", error);
+        await ctx.editMessageText("解讀塔羅牌時發生錯誤，請稍後再試。");
+        tarotSessions.delete(userId);
+      }
+    } else if (spreadType === "celtic") {
+      // 凱爾特十字牌陣 - 由於較複雜，這裡簡化處理
+      await ctx.editMessageText(formatTarotText("凱爾特十字牌陣功能正在開發中，請選擇其他牌陣。"));
+      session.state = "waiting_for_question";
+      await ctx.reply(formatTarotText("請從以下選項中選擇一種牌陣："), {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "單張牌陣 - 簡單問題的快速指引", callback_data: "tarot:spread:single" }],
+            [{ text: "三張牌陣 - 過去、現在、未來", callback_data: "tarot:spread:three" }],
+            [{ text: "取消占卜", callback_data: "tarot:cancel" }]
+          ]
+        }
+      });
+    }
+    
+    return;
+  }
 });
 
 // 修改文字訊息處理中的塔羅牌部分
