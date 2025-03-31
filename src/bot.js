@@ -28,6 +28,18 @@ if (!process.env.GROQ_API_KEY) {
   process.exit(1);
 }
 
+// Grok API 配置
+const GROK_API_CONFIG = {
+  apiUrl: "https://api.x.ai/v1/chat/completions",
+  apiKey: process.env.GROK_API_KEY || '',
+  model: "grok-2-latest"
+};
+
+// 確保在使用前檢查 Grok API 金鑰
+if (!process.env.GROK_API_KEY) {
+  console.warn('GROK_API_KEY environment variable is not set. Grok 2 model will not be available.');
+}
+
 // 配置 bot 客戶端選項
 const botClientConfig = {
   client: {
@@ -45,8 +57,15 @@ const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN, botClientConfig);
 const tarotAPI = new TarotCardAPI();
 
 // 模型設置
-const models = process.env.GROQ_MODELS?.split(",") || [CONFIG.defaultModel];
-let currentModel = models[0];
+const groqModels = process.env.GROQ_MODELS?.split(",") || [CONFIG.defaultModel];
+const allModels = [...groqModels];
+
+// 如果 Grok API 金鑰存在，添加 Grok 2 模型
+if (process.env.GROK_API_KEY) {
+  allModels.push("grok-2-latest");
+}
+
+let currentModel = allModels[0];
 
 // 常量定義
 const SEPARATOR = "───────────";
@@ -193,6 +212,68 @@ async function getGroqResponse(query, userId) {
   }
 }
 
+// Grok API 請求處理
+async function getGrokResponse(query, userId) {
+  if (!GROK_API_CONFIG.apiKey) {
+    throw new Error('Grok API key not set');
+  }
+
+  try {
+    const history = conversationManager.getHistory(userId);
+
+    const messages = [
+      { role: "system", content: CONFIG.systemPrompt },
+      ...history,
+      { role: "user", content: query },
+    ];
+
+    console.log('Sending request to Grok API...'); // 添加日誌
+    
+    const response = await fetch(GROK_API_CONFIG.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROK_API_CONFIG.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: GROK_API_CONFIG.model,
+        messages: messages,
+        temperature: CONFIG.temperature,
+        max_tokens: CONFIG.maxTokens,
+        stream: false,
+        top_p: 1,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Grok API responded with status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log('Received response from Grok API'); // 添加日誌
+
+    if (!data?.choices?.[0]?.message?.content) {
+      throw new Error('Invalid or empty response from Grok API');
+    }
+
+    const formattedResponse = formatResponse(data.choices[0].message.content);
+    return formattedResponse;
+  } catch (error) {
+    console.error("Grok API Error:", error);
+    throw new Error("與 Grok AI 服務通訊時發生錯誤，請稍後再試");
+  }
+}
+
+// 統一的 AI 回應處理函數
+async function getAIResponse(query, userId) {
+  // 根據當前模型選擇使用哪個 API
+  if (currentModel === "grok-2-latest") {
+    return await getGrokResponse(query, userId);
+  } else {
+    return await getGroqResponse(query, userId);
+  }
+}
+
 function formatResponse(text) {
   // 首先移除第一個 think 標籤區塊
   text = text.replace(/<think>.*?<\/think>/s, "").trim();
@@ -215,7 +296,7 @@ function formatResponse(text) {
         // 非代碼區塊：轉義 HTML 特殊字符
         return part
           .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")  // 修正這裡，原本是 /<//g
+          .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;");
       } else {
         // 代碼區塊：保持原樣
@@ -232,205 +313,121 @@ bot.command("start", (ctx) => {
   ctx.reply(
     "歡迎使用 AI 助手! 您可以直接輸入問題與我對話。\n\n" +
       "可用指令:\n" +
-      "/setmodel - 切換模型\n" +
-      "/currentmodel - 查看當前模型\n" +
+      "/model - 查看並切換 AI 模型\n" +
       "/clear - 清除對話歷史\n" +
       "/history - 查看對話歷史\n" +
-      "/tarot - 開始塔羅牌占卜"
+      "/tarot - 塔羅牌占卜",
+    { parse_mode: "HTML" }
   );
 });
 
-bot.command("setmodel", (ctx) => {
-  const modelButtons = models.map((model) => [
-    {
-      text: model,
-      callback_data: `model:${model}`,
-    },
-  ]);
-
-  ctx.reply("請選擇要使用的模型:", {
-    reply_markup: { inline_keyboard: modelButtons },
-  });
-});
-
-bot.command("currentmodel", (ctx) => {
-  ctx.reply(`目前使用的模型是: ${currentModel}`);
-});
-
-bot.command("clear", (ctx) => {
-  const userId = ctx.from.id;
-  conversationManager.clearHistory(userId);
-  ctx.reply("已清除您的對話歷史");
-});
-
-bot.command("history", async (ctx) => {
-  const userId = ctx.from.id;
-  const history = conversationManager.getReadableHistory(userId);
-  await ctx.reply(history, {
-    parse_mode: "HTML",
-    // 可選：如果訊息太長，可以設置禁用網頁預覽
-    disable_web_page_preview: true,
-  });
-});
-
-// 修改塔羅牌命令處理
-bot.command("tarot", async (ctx) => {
-  try {
-    const userId = ctx.from.id;
-    const response = tarotAPI.startReading(userId);
-    await ctx.reply(response);
-  } catch (error) {
-    console.error('Error starting tarot reading:', error);
-    await ctx.reply('開始塔羅牌占卜時發生錯誤，請稍後再試');
-  }
-});
-
-// 添加管理員命令來設置 bot 命令
-bot.command("setupcommands", async (ctx) => {
-  try {
-    await bot.api.setMyCommands([
-      { command: "start", description: "開始使用" },
-      { command: "setmodel", description: "設定模型" },
-      { command: "currentmodel", description: "顯示目前使用的模型" },
-      { command: "clear", description: "清除對話歷史" },
-      { command: "history", description: "查看對話歷史" },
-      { command: "tarot", description: "開始塔羅牌占卜" }
-    ]);
-    await ctx.reply("Bot commands set successfully");
-  } catch (error) {
-    console.warn("Failed to set bot commands:", error.message);
-    await ctx.reply("Failed to set bot commands: " + error.message);
-  }
-});
-
-// 按鈕回調處理
-bot.on("callback_query:data", async (ctx) => {
-  const data = ctx.callbackQuery.data;
-
-  if (data.startsWith("model:")) {
-    const newModel = data.split(":")[1];
-    if (models.includes(newModel)) {
-      currentModel = newModel;
-      await ctx.reply(`已切換至模型: ${newModel}`);
-    }
-  }
-
-  await ctx.answerCallbackQuery();
-});
-
-// 塔羅牌解讀回調函數
-async function createTarotInterpretCallback(ctx) {
-  return async (messages) => {
-    if (!groq) {
-      throw new Error('Groq API not initialized');
-    }
-
-    try {
-      console.log('Sending tarot interpretation request...'); // 添加日誌
-      const completion = await groq.chat.completions.create({
-        messages,
-        model: currentModel,
-        temperature: CONFIG.temperature,
-        max_tokens: CONFIG.maxTokens,
-        top_p: 1,
-      });
-      console.log('Received tarot interpretation response'); // 添加日誌
-
-      if (!completion?.choices?.[0]?.message?.content) {
-        throw new Error('Invalid tarot interpretation response');
-      }
-
-      return completion.choices[0].message.content
-        .replace(/<think>.*?<\/think>/gs, '')
-        .trim();
-    } catch (error) {
-      console.error('Tarot interpretation error:', error);
-      throw new Error('塔羅牌解讀時發生錯誤');
-    }
+// 模型切換指令
+bot.command("model", async (ctx) => {
+  const keyboard = {
+    inline_keyboard: allModels.map((model) => [
+      {
+        text: `${model === currentModel ? "✓ " : ""}${model}`,
+        callback_data: `model:${model}`,
+      },
+    ]),
   };
-}
+
+  await ctx.reply("請選擇 AI 模型:", {
+    reply_markup: keyboard,
+  });
+});
+
+// 處理模型選擇的回調
+bot.callbackQuery(/^model:(.+)$/, async (ctx) => {
+  const modelName = ctx.match[1];
+  
+  // 檢查模型是否在可用列表中
+  if (!allModels.includes(modelName)) {
+    await ctx.answerCallbackQuery({
+      text: `模型 ${modelName} 不可用`,
+      show_alert: true,
+    });
+    return;
+  }
+  
+  // 如果選擇 Grok 2 但沒有 API 金鑰
+  if (modelName === "grok-2-latest" && !GROK_API_CONFIG.apiKey) {
+    await ctx.answerCallbackQuery({
+      text: `Grok 2 模型不可用：缺少 API 金鑰`,
+      show_alert: true,
+    });
+    return;
+  }
+
+  currentModel = modelName;
+  await ctx.answerCallbackQuery({
+    text: `已切換到模型: ${modelName}`,
+    show_alert: true,
+  });
+
+  // 更新模型選擇菜單
+  const keyboard = {
+    inline_keyboard: allModels.map((model) => [
+      {
+        text: `${model === currentModel ? "✓ " : ""}${model}`,
+        callback_data: `model:${model}`,
+      },
+    ]),
+  };
+
+  await ctx.editMessageReplyMarkup(keyboard);
+});
 
 // 修改文字訊息處理中的塔羅牌部分
 bot.on("message:text", async (ctx) => {
   const userId = ctx.from.id;
   const userMessage = ctx.message.text;
 
-  // Check if user is in a tarot reading session
-  const tarotState = tarotAPI.getUserState(userId);
-  
-  if (tarotState) {
-    try {
-      switch (tarotState.step) {
-        case "waiting_question":
-          const questionResponse = tarotAPI.setQuestion(userId, userMessage);
-          await ctx.reply(questionResponse);
-          return;
-
-        case "waiting_numbers":
-          await ctx.replyWithChatAction("typing");
-          
-          const interpretCallback = await createTarotInterpretCallback(ctx);
-          const result = await tarotAPI.selectCards(userId, userMessage, interpretCallback);
-
-          // Send card interpretations one by one with images
-          for (const cardResult of result.cards) {
-            if (result.cards.indexOf(cardResult) !== 0) {
-              await ctx.reply('───────────');
-            }
-
-            await ctx.replyWithPhoto(
-              `https://media.virtualxnews.com${cardResult.card.image}`,
-              {
-                caption: `🎴 牌面：${cardResult.card.chineseName || cardResult.card.name}${cardResult.card.isReversed ? '（逆位）' : '（正位）'}`,
-              }
-            );
-
-            await ctx.reply(cardResult.interpretation);
-          }
-
-          await ctx.reply('───────────');
-          await ctx.reply(`🔮 綜合解讀：\n\n${result.overallInterpretation}`);
-          await ctx.reply("✨ 塔羅牌占卜結束\n您可以輸入 /tarot 開始新的占卜");
-          return;
-      }
-    } catch (error) {
-      console.error('Tarot reading error:', error);
-      await ctx.reply('塔羅牌占卜過程中發生錯誤，請重新開始');
+  // 處理塔羅牌占卜狀態
+  if (tarotSessions.has(userId)) {
+    const session = tarotSessions.get(userId);
+    
+    // 處理各種塔羅牌狀態
+    if (session.state === "waiting_for_question") {
+      // 用戶已輸入問題，進入抽牌階段
+      session.question = userMessage;
+      session.state = "drawing_cards";
+      
+      await ctx.reply(formatTarotText(`您的問題是：${session.question}`));
+      await ctx.reply(formatTarotText("請從以下選項中選擇一種牌陣："), {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "單張牌陣 - 簡單問題的快速指引", callback_data: "tarot:spread:single" }],
+            [{ text: "三張牌陣 - 過去、現在、未來", callback_data: "tarot:spread:three" }],
+            [{ text: "凱爾特十字牌陣 - 複雜問題的深入分析", callback_data: "tarot:spread:celtic" }],
+            [{ text: "取消占卜", callback_data: "tarot:cancel" }]
+          ]
+        }
+      });
       return;
     }
+    
+    // 如果用戶在其他塔羅牌狀態中輸入文本，提醒他們當前正在進行占卜
+    await ctx.reply("您正在進行塔羅牌占卜。請按照指示操作，或輸入 /cancel 取消占卜。");
+    return;
   }
 
-  // Handle regular chat if not in tarot session
+  // 一般對話處理
   try {
+    // 顯示「正在輸入...」狀態
     await ctx.replyWithChatAction("typing");
 
-    const response = await getGroqResponse(userMessage, userId);
+    // 獲取 AI 回應
+    const response = await getAIResponse(userMessage, userId);
 
-    // 分段發送較長的消息
-    const maxLength = 4000; // Telegram 消息長度限制
-    if (response.length > maxLength) {
-      const chunks = response.match(new RegExp(`.{1,${maxLength}}`, "g")) || [];
-      for (const chunk of chunks) {
-        await ctx.reply(chunk, {
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-        });
-      }
-    } else {
-      await ctx.reply(response, {
-        reply_to_message_id: ctx.message.message_id,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      });
-    }
+    // 儲存對話
+    conversationManager.addMessage(userMessage, response, userId);
 
-    // 儲存純文本版本到歷史記錄
-    const plainResponse = response.replace(/<[^>]+>/g, "").trim();
-
-    conversationManager.addMessage(userId, userMessage, plainResponse);
+    // 發送回應
+    await ctx.reply(response, { parse_mode: "MarkdownV2" });
   } catch (error) {
-    console.error("Error:", error);
-    await ctx.reply("抱歉,處理您的訊息時發生錯誤。請稍後再試。");
+    console.error("Error processing message:", error);
+    await ctx.reply(`😕 ${error.message || "處理訊息時發生錯誤，請稍後再試。"}`);
   }
 });
 
