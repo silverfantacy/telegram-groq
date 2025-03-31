@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 import Groq from "groq-sdk";
 import TarotCardAPI from "./tarotcard/tarotcardapi.js";
+import OpenAI from "openai";
 
 // 配置
 const CONFIG = {
@@ -30,10 +31,18 @@ if (!process.env.GROQ_API_KEY) {
 
 // Grok API 配置
 const GROK_API_CONFIG = {
-  apiUrl: "https://api.x.ai/v1/chat/completions",
   apiKey: process.env.GROK_API_KEY || '',
   model: "grok-2-latest"
 };
+
+// 初始化 X.AI 客戶端
+let xaiClient = null;
+if (process.env.GROK_API_KEY) {
+  xaiClient = new OpenAI({
+    apiKey: process.env.GROK_API_KEY,
+    baseURL: "https://api.x.ai/v1",
+  });
+}
 
 // 確保在使用前檢查 Grok API 金鑰
 if (!process.env.GROK_API_KEY) {
@@ -212,7 +221,7 @@ async function getGroqResponse(query, userId) {
 
 // Grok API 請求處理
 async function getGrokResponse(query, userId) {
-  if (!GROK_API_CONFIG.apiKey) {
+  if (!xaiClient) {
     throw new Error('Grok API key not set');
   }
 
@@ -227,34 +236,20 @@ async function getGrokResponse(query, userId) {
 
     console.log('Sending request to Grok API...'); // 添加日誌
     
-    const response = await fetch(GROK_API_CONFIG.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROK_API_CONFIG.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: GROK_API_CONFIG.model,
-        messages: messages,
-        temperature: CONFIG.temperature,
-        max_tokens: CONFIG.maxTokens,
-        stream: false,
-        top_p: 1,
-      }),
+    const completion = await xaiClient.chat.completions.create({
+      model: GROK_API_CONFIG.model,
+      messages: messages,
+      temperature: CONFIG.temperature,
+      max_tokens: CONFIG.maxTokens,
     });
 
-    if (!response.ok) {
-      throw new Error(`Grok API responded with status: ${response.status}`);
-    }
-
-    const data = await response.json();
     console.log('Received response from Grok API'); // 添加日誌
 
-    if (!data?.choices?.[0]?.message?.content) {
+    if (!completion?.choices?.[0]?.message?.content) {
       throw new Error('Invalid or empty response from Grok API');
     }
 
-    const formattedResponse = formatResponse(data.choices[0].message.content);
+    const formattedResponse = formatResponse(completion.choices[0].message.content);
     return formattedResponse;
   } catch (error) {
     console.error("Grok API Error:", error);
